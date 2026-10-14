@@ -45,21 +45,26 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           BAKASU_FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true }}
         run: python3 08-tools/resukisu-addon/ci/watch_upstream.py
+      - name: Explain required initial input bundle
+        if: ${{ vars.BAKASU_INPUT_BUNDLE_URL == '' || vars.BAKASU_INPUT_BUNDLE_SHA256 == '' }}
+        run: echo '::warning::GitHub-hosted kernel build requires one-time prepared source/stock bundle URL and SHA256 repository variables; upstream watcher still works.'
 
   kernel:
     name: Build POCO F6 kernel and validate stock modules
     needs: [watch]
-    if: github.event_name != 'push' && needs.watch.outputs.changed == 'true'
-    runs-on: [self-hosted, linux, x64, peridot-kernel]
+    if: github.event_name != 'push' && needs.watch.outputs.changed == 'true' && vars.BAKASU_INPUT_BUNDLE_URL != '' && vars.BAKASU_INPUT_BUNDLE_SHA256 != ''
+    runs-on: ubuntu-24.04
     timeout-minutes: 350
     permissions:
       contents: read
     env:
       BAKASU_CI_SHA: ${{ needs.watch.outputs.upstream_sha }}
       BAKASU_CI_PREVIOUS_IMAGE_SHA: ${{ needs.watch.outputs.previous_image_sha }}
-      BAKASU_CI_SOURCE: ${{ vars.BAKASU_BASE_SOURCE }}
-      BAKASU_CI_ASSET_ROOT: ${{ vars.BAKASU_ASSET_ROOT }}
-      BAKASU_CI_STOCK_CERT: ${{ vars.BAKASU_STOCK_CERT }}
+      BAKASU_CI_SOURCE: ${{ github.workspace }}/.ci-inputs/source
+      BAKASU_CI_ASSET_ROOT: ${{ github.workspace }}/.ci-inputs/assets
+      BAKASU_CI_STOCK_CERT: ${{ github.workspace }}/.ci-inputs/assets/.cache/resukisu-uapi5-finalize/stock-module-public.pem
+      BAKASU_INPUT_BUNDLE_URL: ${{ vars.BAKASU_INPUT_BUNDLE_URL }}
+      BAKASU_INPUT_BUNDLE_SHA256: ${{ vars.BAKASU_INPUT_BUNDLE_SHA256 }}
       BAKASU_CI_STAGE: ${{ github.workspace }}/.ci-stage-peridot-bakasu-${{ github.run_id }}
       BAKASU_CI_OUTPUT: ${{ github.workspace }}/builder/work/bakasu-${{ github.run_id }}
       BAKASU_CI_PACKAGE_OUT: ${{ github.workspace }}/builder/work/bakasu-artifacts-${{ github.run_id }}
@@ -67,6 +72,18 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
+      - name: Prepare GitHub-hosted Linux build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h .
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git rsync patch clang lld llvm make bc bison flex libssl-dev libelf-dev dwarves zstd openssl python3-cryptography
+          python3 -c 'import cryptography'
+          df -h .
+      - name: Fetch SHA-256 pinned stock and source inputs
+        shell: bash
+        run: python3 08-tools/resukisu-addon/ci/fetch_hosted_inputs.py
       - name: Verify isolated runner and stock inputs
         shell: bash
         run: |
