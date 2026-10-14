@@ -55,7 +55,7 @@ jobs:
       BAKASU_CI_SOURCE: ${{ vars.BAKASU_BASE_SOURCE }}
       BAKASU_CI_ASSET_ROOT: ${{ vars.BAKASU_ASSET_ROOT }}
       BAKASU_CI_STOCK_CERT: ${{ vars.BAKASU_STOCK_CERT }}
-      BAKASU_CI_STAGE: ${{ runner.temp }}/peridot-bakasu-${{ github.run_id }}
+      BAKASU_CI_STAGE: ${{ github.workspace }}/.ci-stage-peridot-bakasu-${{ github.run_id }}
       BAKASU_CI_OUTPUT: ${{ github.workspace }}/builder/work/bakasu-${{ github.run_id }}
       BAKASU_CI_PACKAGE_OUT: ${{ github.workspace }}/builder/work/bakasu-artifacts-${{ github.run_id }}
     steps:
