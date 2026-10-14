@@ -1,0 +1,122 @@
+name: POCO F6 BakaSU + SUSFS + WildKernels
+
+on:
+  schedule:
+    - cron: '17 3,15 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build even when this upstream revision already has a validated artifact'
+        type: boolean
+        default: false
+  repository_dispatch:
+    types: [bakasu-updated]
+
+concurrency:
+  group: peridot-bakasu-fullbundle
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Check BakaSU upstream and artifact history
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      upstream_sha: ${{ steps.detect.outputs.upstream_sha }}
+      changed: ${{ steps.detect.outputs.changed }}
+      previous_image_sha: ${{ steps.detect.outputs.previous_image_sha }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Validate watcher
+        run: python3 -m unittest discover -s 08-tools/resukisu-addon/ci -p 'test_*.py' -v
+      - name: Poll official BakaSU main and successful artifacts
+        id: detect
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BAKASU_FORCE_BUILD: ${{ github.event_name == 'workflow_dispatch' && inputs.force == true }}
+        run: python3 08-tools/resukisu-addon/ci/watch_upstream.py
+
+  kernel:
+    name: Build POCO F6 kernel and validate stock modules
+    needs: [watch]
+    if: needs.watch.outputs.changed == 'true'
+    runs-on: [self-hosted, linux, x64, peridot-kernel]
+    timeout-minutes: 350
+    permissions:
+      contents: read
+    env:
+      BAKASU_CI_SHA: ${{ needs.watch.outputs.upstream_sha }}
+      BAKASU_CI_PREVIOUS_IMAGE_SHA: ${{ needs.watch.outputs.previous_image_sha }}
+      BAKASU_CI_SOURCE: ${{ vars.BAKASU_BASE_SOURCE }}
+      BAKASU_CI_ASSET_ROOT: ${{ vars.BAKASU_ASSET_ROOT }}
+      BAKASU_CI_STOCK_CERT: ${{ vars.BAKASU_STOCK_CERT }}
+      BAKASU_CI_STAGE: ${{ runner.temp }}/peridot-bakasu-${{ github.run_id }}
+      BAKASU_CI_OUTPUT: ${{ github.workspace }}/builder/work/bakasu-${{ github.run_id }}
+      BAKASU_CI_PACKAGE_OUT: ${{ github.workspace }}/builder/work/bakasu-artifacts-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Verify isolated runner and stock inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$BAKASU_CI_SOURCE" && test -d "$BAKASU_CI_SOURCE/common"
+          test -f "$BAKASU_CI_SOURCE/out-uapi5/.config"
+          test -s "$BAKASU_CI_SOURCE/out-uapi5/arch/arm64/boot/Image"
+          test -n "$BAKASU_CI_ASSET_ROOT" && test -d "$BAKASU_CI_ASSET_ROOT"
+          test ! -e "$BAKASU_CI_ASSET_ROOT/.private" || { echo 'Never expose ROM signing keys to unattended upstream builds' >&2; exit 1; }
+          test -d "$BAKASU_CI_ASSET_ROOT/.cache/resukisu-candidate/system_dlkm-extracted/lib"
+          test -d "$BAKASU_CI_ASSET_ROOT/.cache/resukisu-candidate/vendor_dlkm-extracted/lib"
+          test -f "$BAKASU_CI_ASSET_ROOT/00-manifest/resukisu-candidate/kernel_aarch64_Module.symvers"
+          test -f "$BAKASU_CI_ASSET_ROOT/.cache/global-single-recovery-ri2/source-images/images/vendor_boot.img"
+          test -f "$BAKASU_CI_ASSET_ROOT/.cache/global-single-recovery-ri2/source-images/images/boot.img"
+          if [ -z "$BAKASU_CI_STOCK_CERT" ]; then
+            echo "BAKASU_CI_STOCK_CERT=$BAKASU_CI_ASSET_ROOT/.cache/resukisu-uapi5-finalize/stock-module-public.pem" >> "$GITHUB_ENV"
+          fi
+          test -s "$BAKASU_CI_ASSET_ROOT/.cache/resukisu-uapi5-finalize/stock-module-public.pem"
+          test ! -e "$BAKASU_CI_STAGE" && test ! -e "$BAKASU_CI_OUTPUT"
+          for tool in git patch rsync make clang llvm-nm python3 openssl; do command -v "$tool" >/dev/null || { echo "Missing: $tool" >&2; exit 1; }; done
+          python3 -c 'import cryptography'
+          clang --version | head -n 1
+          git --version
+      - name: Build exact BakaSU revision with original pinned SUSFS and full WildKernels feature set
+        shell: bash
+        run: bash 08-tools/resukisu-addon/build_uapi5_full_bundle.sh
+      - name: Check module CRCs, symbol imports, stock module signatures and kernel release
+        shell: bash
+        run: python3 08-tools/resukisu-addon/verify_uapi5_full_bundle.py
+      - name: Package guarded update and rollback candidates without signing keys
+        shell: bash
+        run: python3 08-tools/resukisu-addon/ci/package_candidate.py
+      - name: Publish build identity only after all validation gates pass
+        id: identity
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib
+          rec = json.loads((pathlib.Path(os.environ['BAKASU_CI_PACKAGE_OUT']) / 'candidate-validation.json').read_text())
+          assert rec['status'] == 'candidate-packaging-verified'
+          assert rec['stock_module_compatibility_passed'] and rec['signed'] is False and rec['device_tested'] is False
+          assert rec['upstream_sha'] == os.environ['BAKASU_CI_SHA']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f"upstream_sha={rec['upstream_sha']}\nimage_sha={rec['image_sha256']}\n")
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
+              out.write('### BakaSU UAPI5 POCO F6 candidate\n\n')
+              out.write('All 10 WildKernels/SUSFS features preserved; stock module ABI checks passed.\n\n')
+              out.write('Three UNSIGNED artifacts: update, rollback to pinned full bundle, rollback to stock.\n\n')
+              out.write('**Not device-tested; never auto-flash.**\n')
+          PY
+      - name: Upload candidate builds (not automatically published as releases)
+        uses: actions/upload-artifact@v4
+        with:
+          name: bakasu-peridot-${{ steps.identity.outputs.upstream_sha }}-${{ steps.identity.outputs.image_sha }}
+          path: ${{ env.BAKASU_CI_PACKAGE_OUT }}/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
