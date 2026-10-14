@@ -1,8 +1,10 @@
 """Offline tests for BakaSU watcher: no GitHub API or device access required."""
 from __future__ import annotations
+import base64
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name("watch_upstream.py")
 spec = importlib.util.spec_from_file_location("watch_upstream", SCRIPT)
@@ -69,6 +71,71 @@ class WatchTests(unittest.TestCase):
     def test_other_revisions_do_not_satisfy_current(self):
         d = watch.choose(B, [artifact(A, IMAGE1, "2026-10-14T00:00:00Z")])
         self.assertFalse(d["already_built"])
+
+    def test_upstream_intentional_susfs_stop_is_honored(self):
+        text = (
+            "# old susfs is incompatible\n"
+            "$(info -- BakaSU: Please wait simonpunk update)\n"
+            "$(error Please wait susfs update.)\n"
+        )
+        supported, reason = watch.susfs_inline_gate(text)
+        self.assertFalse(supported)
+        self.assertEqual(reason, "upstream_susfs_inline_build_suspended")
+
+    def test_pre_suspension_susfs_contract_is_not_blocked(self):
+        text = (
+            "# susfs selinux_hide feature\n"
+            "ifeq ($(shell echo ok),0)\n"
+            "ccflags-y += -DKSU_COMPAT_HAS_SUSFS_FEATURE_SELINUX_HIDE\n"
+            "endif\n"
+        )
+        self.assertTrue(watch.susfs_inline_gate(text)[0])
+
+    def test_unknown_contract_is_fail_closed(self):
+        self.assertFalse(watch.susfs_inline_gate("")[0])
+        self.assertFalse(watch.susfs_inline_gate("CONFIG=maybe")[0])
+        self.assertFalse(watch.susfs_inline_gate("$(error SUSFS compatibility unknown)")[0])
+
+    def test_manual_force_does_not_override_upstream_hard_stop(self):
+        compat = "$(info -- susfs compatibility)\n$(error Please wait susfs update.)\n"
+        calls = []
+        def api(url, token):
+            calls.append(url)
+            if "/git/ref/heads/main" in url:
+                return {"object": {"sha": A}}
+            if "/actions/artifacts" in url:
+                return {"artifacts": []}
+            if "/contents/kernel/tools/susfs_compat.mk" in url:
+                return {"encoding": "base64", "content": base64.b64encode(compat.encode()).decode()}
+            raise AssertionError("Unexpected API endpoint: " + url)
+        with patch.object(watch, "api_json", side_effect=api):
+            result = watch.inspect_remote("Kyne0328/peridot-bakasu-kernel", "", True)
+        self.assertTrue(result["changed"])
+        self.assertTrue(result["force"])
+        self.assertFalse(result["build_required"])
+        self.assertFalse(result["susfs_inline_supported"])
+        self.assertEqual(result["susfs_status"], "upstream_susfs_inline_build_suspended")
+        self.assertTrue(any("?ref=" + A in u for u in calls))
+
+    def test_new_upstream_without_stop_may_build(self):
+        compat = "# susfs inline compatibility\nccflags-y += -DSUSFS\n"
+        def api(url, token):
+            if "/git/ref/heads/main" in url:
+                return {"object": {"sha": B}}
+            if "/actions/artifacts" in url:
+                return {"artifacts": []}
+            if "/contents/kernel/tools/susfs_compat.mk" in url:
+                return {"encoding": "base64", "content": base64.b64encode(compat.encode()).decode()}
+            raise AssertionError("Unexpected API URL")
+        with patch.object(watch, "api_json", side_effect=api):
+            result = watch.inspect_remote("Kyne0328/peridot-bakasu-kernel", "", False)
+        self.assertTrue(result["build_required"])
+        self.assertTrue(result["susfs_inline_supported"])
+
+    def test_unexpected_upstream_contract_format_is_rejected(self):
+        with patch.object(watch, "api_json", return_value={"encoding":"utf-8", "content":"wrong"}):
+            with self.assertRaises(ValueError):
+                watch.read_susfs_contract(A)
 
 
 if __name__ == "__main__":

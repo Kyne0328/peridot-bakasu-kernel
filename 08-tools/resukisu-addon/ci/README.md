@@ -8,8 +8,35 @@ starting point; builds that exceed disk/memory need further optimization.
 The workflow watches the official
 [ Baka-SU/BakaSU ](https://github.com/Baka-SU/BakaSU)
 `main` branch twice daily, at 03:17 and 15:17 UTC (11:17 AM and 11:17 PM
-Manila). On a new revision it attempts a kernel build if—and only if—its
-owner-provided, SHA-256-pinned stock input bundle is configured.
+Manila). For a new revision, the watcher **first checks the exact BakaSU
+commit's SUSFS integration contract**. It only starts a kernel build when
+there is no upstream hard-stop, no successful previous artifact, and the
+SHA-256-pinned stock input bundle is configured.
+
+## Current upstream SUSFS suspension (October 14, 2026)
+
+The first GitHub-hosted build (run 38571059200) successfully downloaded
+and verified the stock/source input archive, checked its kernel prerequisites,
+and applied the pinned 10-feature WildKernels patch set. It then **failed
+inside BakaSU's own kernel build** after approximately 25 minutes:
+
+    kernel/tools/susfs_compat.mk:20: *** Please wait susfs update. Stop.
+
+This is intentional. [BakaSU commit 48fa4bb](https://github.com/Baka-SU/BakaSU/commit/48fa4bb7ec8bddb8ea932a8c9be0877f89a1fa73)
+on October 10 suspended SUSFS inline compilation pending synchronization
+with upstream KernelSU. Simply bumping our pinned SUSFS commit cannot bypass
+this unconditional guard safely.
+
+**New fail-closed behavior:** the watcher fetches
+`kernel/tools/susfs_compat.mk` at the **exact BakaSU commit being watched**,
+rejects an explicit upstream `$(error ...)` stop, and emits a GitHub Actions
+warning explaining that the upstream combination is unavailable. The 10
+pinned SUSFS/WildKernels features stay enabled and unchanged. The expensive
+kernel compilation is **skipped, not marked successful**. Even `force: true`
+will not bypass upstream's compatibility suspension. Every scheduled check
+retries automatically; when upstream removes the stop, CI may attempt full
+compilation and all original stock module/ABI checks. A passing source
+preflight is not itself a compatibility or device-boot guarantee.
 
 ## Why do we need an input bundle?
 
@@ -26,6 +53,13 @@ Because this is a public repository, **do not commit, publish as GitHub
 Release assets, or upload proprietary vendor modules or personal files
 to the public repository without distribution permission**. The clean
 alternative is a private, owner-controlled HTTPS object store.
+
+The original 688.8 MB input bundle was published in the user-owned
+[CI inputs Release](https://github.com/Kyne0328/peridot-bakasu-kernel/releases/tag/ci-stock-inputs-20261014),
+and its URL/SHA-256 are configured in repository Actions variables. Because
+that repository is public, the archived original stock module and firmware
+references are also publicly downloadable; their redistribution terms should
+be reviewed separately.
 
 The runner has **no OTA/private signing key**. The produced packages are
 clearly UNSIGNED, not device tested, and do not modify the HyperOS ROM.

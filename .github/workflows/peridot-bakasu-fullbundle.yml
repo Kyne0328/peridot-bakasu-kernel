@@ -32,6 +32,8 @@ jobs:
     outputs:
       upstream_sha: ${{ steps.detect.outputs.upstream_sha }}
       changed: ${{ steps.detect.outputs.changed }}
+      build_required: ${{ steps.detect.outputs.build_required }}
+      susfs_status: ${{ steps.detect.outputs.susfs_status }}
       previous_image_sha: ${{ steps.detect.outputs.previous_image_sha }}
     steps:
       - uses: actions/checkout@v6
@@ -52,7 +54,7 @@ jobs:
   kernel:
     name: Build POCO F6 kernel and validate stock modules
     needs: [watch]
-    if: github.event_name != 'push' && needs.watch.outputs.changed == 'true' && vars.BAKASU_INPUT_BUNDLE_URL != '' && vars.BAKASU_INPUT_BUNDLE_SHA256 != ''
+    if: github.event_name != 'push' && needs.watch.outputs.build_required == 'true' && vars.BAKASU_INPUT_BUNDLE_URL != '' && vars.BAKASU_INPUT_BUNDLE_SHA256 != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     permissions:

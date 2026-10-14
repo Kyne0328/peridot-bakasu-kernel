@@ -78,6 +78,15 @@ fi
 [[ "$(git -C "$BASE/susfs4ksu" rev-parse HEAD)" == "$SUSFS_SHA" ]] || die "SUSFS pin mismatch"
 grep -q 'KERNEL_SU_UAPI_VERSION = 5' "$BASE/ReSukiSU/uapi/supercall.h" || die "ReSukiSU is not UAPI 5"
 
+# BakaSU intentionally suspended SUSFS inline builds on 2026-10-10.
+# Stop BEFORE expensive WildKernels patch downloads and kernel compilation.
+# Do not remove the upstream guard or change to a different hooking mode.
+SUSFS_COMPAT="$BASE/ReSukiSU/kernel/tools/susfs_compat.mk"
+[[ -f "$SUSFS_COMPAT" ]] || die "Missing BakaSU SUSFS compatibility source"
+if grep -Eq '^[[:space:]]*\$\([[:space:]]*error([[:space:]]|\))' "$SUSFS_COMPAT"; then
+  die "BakaSU upstream explicitly suspends SUSFS inline builds at $RESUKISU_SHA. Preserve current SUSFS/WildKernels pins; retry only after upstream restores compatibility."
+fi
+
 mkdir -p "$OUT" "$PUBLIC_OUT"
 cp "$SRC/out-uapi5/.config" "$OUT/.config"
 
