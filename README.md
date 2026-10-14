@@ -8,8 +8,10 @@ This repository hosts a reproducible build *candidate* pipeline for the BakaSU p
 
 - **CI source migrated:** GitHub Actions watcher, pinned kernel recipe, stock-module compatibility validator, AnyKernel update/rollback packager and offline tests.
 - **Tested locally:** upstream watcher logic and reproduction of three **unsigned** AnyKernel candidates from an already-built known-good kernel.
-- **Not yet operational end to end:** GitHub-hosted Ubuntu builds are configured, but the one-time owner-prepared checksum-pinned stock/source input archive still must be hosted and repository input variables configured before full kernel compilation can start.
+- **GitHub-hosted inputs configured:** The [pinned 688.8 MB CI input archive](https://github.com/Kyne0328/peridot-bakasu-kernel/releases/tag/ci-stock-inputs-20261014) has been published as a separate Release asset and its HTTPS URL/SHA-256 are configured in Actions variables. A first hosted kernel compilation has been triggered; device boot compatibility remains untested.
 - **Not tested on device:** CI artifacts are neither signed for recovery nor automatically flashed. No automatic GitHub Releases.
+
+**Public input bundle notice:** This Release asset is publicly downloadable and contains stock Xiaomi firmware/module references for build validation. Redistribution may be subject to third-party license terms. It contains no private OTA signing keys and is not flashable.
 
 ## Workflow
 
