@@ -16,6 +16,7 @@ import shutil
 import subprocess
 
 PIN = "38d491869bb5d4b4f5337548535f2f1dd3c834a1"
+DRIVER_PIN = "8770c7e324a22895703c4916b8a16520e0b81c79"
 EXTRA = (
     "drivers/misc/ntsync.c",
     "fs/susfs.c", "fs/nomount",
@@ -39,6 +40,10 @@ def stage(source: Path, legacy: Path, driver: Path, config_from: Path,
         raise ValueError("Wrong 6.1.176 source commit")
     if git(source, "ls-files", "-u"):
         raise ValueError("Unresolved merge conflicts; refuse to stage")
+    if git(driver, "rev-parse", "HEAD") != DRIVER_PIN:
+        raise ValueError("Wrong owner ReSukiSU UAPI5 driver source pin")
+    if git(driver, "status", "--porcelain"):
+        raise ValueError("UAPI5 driver source is dirty")
     uapi = (driver / "uapi/supercall.h").read_text()
     if not re.search(r"\bKERNEL_SU_UAPI_VERSION\s*=\s*5\s*;", uapi):
         raise ValueError("Owner root driver is not UAPI 5")
@@ -63,8 +68,11 @@ def stage(source: Path, legacy: Path, driver: Path, config_from: Path,
             shutil.copy2(src, dest)
         manifest.append({"path": relative, "status": "copied-from-owner"})
     driver_dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(driver, driver_dest, symlinks=True,
-                    ignore=shutil.ignore_patterns(".git"))
+    # ReSukiSU Kbuild requires its Git metadata and derives driver version
+    # from commit count; copying source without .git fails at build time.
+    shutil.copytree(driver, driver_dest, symlinks=True)
+    if git(driver_dest, "rev-parse", "HEAD") != DRIVER_PIN:
+        raise ValueError("Staged driver provenance changed")
     link = source / "drivers/kernelsu"
     if link.exists() or link.is_symlink():
         raise ValueError("KernelSU driver symlink already exists")
