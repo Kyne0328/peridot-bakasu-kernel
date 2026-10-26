@@ -88,26 +88,40 @@ def compare_records(
     }
 
 
-def validate_build(image: Path, config: Path, expected_release: str, cert: Path) -> dict:
-    from cryptography import x509
-    from cryptography.hazmat.primitives.serialization import Encoding
+def check_uapi5(path: Path) -> dict:
+    """Reject mismatched root manager UAPI even when KSU itself compiles."""
+    text = path.read_text(encoding="utf-8")
+    found = re.search(r"\bKERNEL_SU_UAPI_VERSION\s*=\s*(\d+)\s*;", text)
+    if not found:
+        raise ValueError("Cannot verify KERNEL_SU_UAPI_VERSION")
+    if int(found.group(1)) != 5:
+        raise ValueError(f"Expected root UAPI 5, got {found.group(1)}")
+    return {"root_uapi_version": 5}
 
+
+def validate_build(image: Path, config: Path, expected_release: str) -> dict:
     cfg = set(config.read_text(encoding="utf-8").splitlines())
-    required = ("KSU", "KSU_SUSFS", "MODVERSIONS", "MODULE_SIG_PROTECT", "CFI_CLANG")
+    required = ("KSU", "KSU_SUSFS", "MODVERSIONS", "CFI_CLANG", "MODULE_SIG",
+                "NOMOUNT", "BBG", "NTSYNC", "TCP_CONG_BBR3")
     missing = [name for name in required if f"CONFIG_{name}=y" not in cfg]
     if missing:
-        raise ValueError("Required rooted stock module config disabled: " + ", ".join(missing))
-    if 'CONFIG_SYSTEM_TRUSTED_KEYS="certs/peridot-stock-public.pem"' not in cfg:
-        raise ValueError("Stock module trust certificate not configured")
-    banner = re.search(rb"Linux version (6\.1\.\d+[^\x00\s]*)", image.read_bytes())
+        raise ValueError("Required rooted fullbundle configs disabled: " + ", ".join(missing))
+    if "CONFIG_MODULE_SIG_PROTECT=y" in cfg:
+        raise ValueError("This experiment requires owner-approved MODULE_SIG_PROTECT=n")
+    if "CONFIG_MODULE_SIG_FORCE=y" in cfg:
+        raise ValueError("MODULE_SIG_FORCE unexpectedly enabled")
+    raw = image.read_bytes()
+    banner = re.search(rb"Linux version (6\.1\.\d+[^\x00\s]*)", raw)
     if not banner or banner.group(1).decode() != expected_release:
         raise ValueError("Built Image kernel release does not match pinned target")
-    embedded = x509.load_pem_x509_certificate(cert.read_bytes()).public_bytes(Encoding.DER)
-    if embedded not in image.read_bytes():
-        raise ValueError("Stock public module verification certificate not embedded in Image")
+    if not expected_release.startswith("6.1.176"):
+        raise ValueError("This gate only supports the approved 6.1.176 experiment")
     return {"kernel_release": expected_release,
-            "image_sha256": hashlib.sha256(image.read_bytes()).hexdigest(),
-            "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest()}
+            "image_sha256": hashlib.sha256(raw).hexdigest(),
+            "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest(),
+            "module_signature_policy": "optional; MODULE_SIG_PROTECT=n, MODULE_SIG_FORCE=n",
+            "module_modversions": "enforced"}
+
 
 
 def main() -> int:
@@ -117,19 +131,21 @@ def main() -> int:
     p.add_argument("--symvers", type=Path, required=True)
     p.add_argument("--report", type=Path, required=True)
     p.add_argument("--release", required=True, help="Exact built kernel.release string")
+    p.add_argument("--uapi-header", required=True, type=Path, help="Exact integrated driver uapi/supercall.h")
     args = p.parse_args()
 
-    # Reuse the verified existing stock-module loader and signature verifier.
+    # Reuse the existing stock-module loader; signature enforcement is optional.
     sys.path.insert(0, str(ROOT / "08-tools" / "resukisu-addon"))
     import verify_uapi5_full_bundle as stock_verify
 
     report = {"schema": 1, "device": "peridot", "root_flavor": "ReSukiSU+SUSFS",
               "source": "stock-module-ABI-verification", "status": "fail"}
     try:
-        for item in (args.image, args.config, args.symvers, stock_verify.STOCK_SYMVERS, stock_verify.CERT):
+        for item in (args.image, args.config, args.symvers, args.uapi_header, stock_verify.STOCK_SYMVERS):
             if not item.is_file():
                 raise FileNotFoundError(str(item))
-        report.update(validate_build(args.image, args.config, args.release, stock_verify.CERT))
+        report.update(validate_build(args.image, args.config, args.release))
+        report.update(check_uapi5(args.uapi_header))
         stock = read_symvers(stock_verify.STOCK_SYMVERS)
         candidate = read_symvers(args.symvers)
         modules = stock_verify.collect_modules()
@@ -140,14 +156,9 @@ def main() -> int:
         report["candidate_exports"] = len(candidate)
         report["symvers_sha256"] = hashlib.sha256(args.symvers.read_bytes()).hexdigest()
         if report["status"] == "pass":
-            # Only spend time verifying every PKCS#7 module signature after KMI passes.
-            signed = 0
-            with tempfile.TemporaryDirectory(prefix="peridot-module-signatures-") as folder:
-                for _, _, data in modules:
-                    sig = stock_verify.verify_module_signature(data, Path(folder))
-                    if sig == "stock-key-signature-verified":
-                        signed += 1
-            report["signed_stock_module_instances"] = signed
+            # A valid stock module CRC map is mandatory; signatures are
+            # deliberately not a gate after the owner's explicit policy change.
+            report["signature_validation_required"] = False
             report["status"] = "offline-kmi-pass-not-device-tested"
     except Exception as exc:
         report["status"] = "fail"
