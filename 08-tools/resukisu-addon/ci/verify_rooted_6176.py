@@ -116,7 +116,7 @@ def main() -> int:
     p.add_argument("--config", type=Path, required=True)
     p.add_argument("--symvers", type=Path, required=True)
     p.add_argument("--report", type=Path, required=True)
-    p.add_argument("--release", default="6.1.176-android14-11-kyneos-6176")
+    p.add_argument("--release", required=True, help="Exact built kernel.release string")
     args = p.parse_args()
 
     # Reuse the verified existing stock-module loader and signature verifier.
