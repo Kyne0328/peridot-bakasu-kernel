@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import unittest
+import tempfile
 from pathlib import Path
 
 PATH = Path(__file__).with_name("verify_rooted_6176.py")
@@ -13,6 +14,32 @@ SPEC.loader.exec_module(module)
 
 
 class StockKmiTests(unittest.TestCase):
+    def test_root_uapi5_required(self):
+        with tempfile.TemporaryDirectory() as folder:
+            header = Path(folder) / "supercall.h"
+            header.write_text("static const __u32 KERNEL_SU_UAPI_VERSION = 5;\n")
+            self.assertEqual(module.check_uapi5(header)["root_uapi_version"], 5)
+            header.write_text("static const __u32 KERNEL_SU_UAPI_VERSION = 2;\n")
+            with self.assertRaisesRegex(ValueError, "Expected root UAPI 5"):
+                module.check_uapi5(header)
+
+    def test_relaxed_signature_policy_keeps_crc_and_features(self):
+        with tempfile.TemporaryDirectory() as folder:
+            image = Path(folder) / "Image"
+            config = Path(folder) / ".config"
+            image.write_bytes(b"\0Linux version 6.1.176-android14-11-test (gcc) #1\0")
+            config.write_text("\n".join(
+                f"CONFIG_{name}=y" for name in (
+                    "KSU", "KSU_SUSFS", "MODVERSIONS", "CFI_CLANG",
+                    "MODULE_SIG", "NOMOUNT", "BBG", "NTSYNC", "TCP_CONG_BBR3"
+                )
+            ))
+            result = module.validate_build(image, config, "6.1.176-android14-11-test")
+            self.assertEqual(result["module_modversions"], "enforced")
+            config.write_text(config.read_text() + "\nCONFIG_MODULE_SIG_PROTECT=y\n")
+            with self.assertRaisesRegex(ValueError, "MODULE_SIG_PROTECT=n"):
+                module.validate_build(image, config, "6.1.176-android14-11-test")
+
     def test_all_matching_stock_kernel_imports_pass(self):
         rows = [("vendor_dlkm", "display.ko", [("driver_probe", 0x1234)])]
         r = module.compare_records(rows, {"driver_probe": 0x1234},
