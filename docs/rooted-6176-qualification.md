@@ -8,7 +8,7 @@ The Theettam 2.8 rooted release uses a distinct kernel build and KMI. An indepen
 
 ## Usage
 
-The gate is deliberately **not** wired to the old 6.1.138 packaging workflow. In an isolated build producing a rooted Linux 6.1.176 candidate, with the existing stock input archive unpacked and a verified stock certificate:
+The gate is deliberately **not** wired to the old 6.1.138 packaging workflow. In an isolated build producing a rooted Linux 6.1.176 candidate, with the existing stock input archive unpacked and the actual UAPI 5 driver header available:
 
 ```bash
 python3 08-tools/resukisu-addon/ci/verify_rooted_6176.py \
@@ -16,10 +16,11 @@ python3 08-tools/resukisu-addon/ci/verify_rooted_6176.py \
   --config /isolated/out/.config \
   --symvers /isolated/out/Module.symvers \
   --release 'ACTUAL_VERIFIED_6.1.176_KERNEL_RELEASE' \
+  --uapi-header /isolated/ReSukiSU/uapi/supercall.h \
   --report /isolated/reports/rooted-6176-abi.json
 ```
 
-`BAKASU_CI_ASSET_ROOT` must point at the **pinned stock hardware inputs**. The tool reuses the existing stock-module collector, ELF parser and signature checks. It requires ReSukiSU and SUSFS config options, `CONFIG_MODVERSIONS`, `CONFIG_MODULE_SIG_PROTECT`, `CONFIG_CFI_CLANG`, the stock public trust certificate in config **and Image**, an exact kernel release banner, and passing module imports and signatures. The report is written even when a check fails. A passing report is only an **offline result**, never proof of runtime support.
+`BAKASU_CI_ASSET_ROOT` must point at the **pinned stock hardware inputs**. The tool reuses the existing stock-module collector, ELF parser and signature checks. It requires an exact **UAPI 5** driver header, ReSukiSU/SUSFS plus core WildKernels config options, `CONFIG_MODVERSIONS`, `CONFIG_CFI_CLANG`, a 6.1.176 release banner, and passing stock module import CRCs. Following owner approval, `CONFIG_MODULE_SIG_PROTECT` and mandatory `CONFIG_MODULE_SIG_FORCE` must be disabled. `CONFIG_MODULE_SIG` remains enabled, but module signature enforcement is **not** a packaging gate. This policy does not relax CRC/import validation. The report is written even when a check fails. A passing report is only an **offline result**, never proof of runtime support.
 
 ## Remaining work before an Image can be considered
 
