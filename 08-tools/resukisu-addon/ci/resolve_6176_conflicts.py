@@ -91,6 +91,31 @@ def resolve(root: Path, apply: bool) -> dict:
             raise ValueError(f"Unresolved conflict in {path} ({index}/{len(choices)})")
         rendered[path] = result
 
+    # Both 6.1.138 and 6.1.176 introduce an identical rate helper outside
+    # of the conflicting whitespace hunk. Git's merge does not flag identical
+    # duplicate function definitions; require exact bodies before removing one.
+    rate = root / "net/ipv4/tcp_rate.c"
+    rtext = rendered["net/ipv4/tcp_rate.c"]
+    declaration = "void tcp_set_tx_in_flight(struct sock *sk, struct sk_buff *skb)\n{"
+    positions = []
+    cursor = 0
+    while (at := rtext.find(declaration, cursor)) >= 0:
+        end = rtext.find("\n}\n", at)
+        if end < 0:
+            raise ValueError("Truncated tcp_set_tx_in_flight body")
+        positions.append((at, end + 3))
+        cursor = end + 3
+    if len(positions) != 2:
+        raise ValueError(f"Expected exactly 2 duplicate tcp_set_tx_in_flight definitions, got {len(positions)}")
+    a = rtext[slice(*positions[0])]
+    b = rtext[slice(*positions[1])]
+    if a != b:
+        raise ValueError("Rate-helper bodies differ: manual merge required")
+    rendered["net/ipv4/tcp_rate.c"] = rtext[:positions[1][0]] + rtext[positions[1][1]:]
+    audit.append({"file": "net/ipv4/tcp_rate.c",
+                  "hunk": "identical-extra-helper",
+                  "choice": "remove identical duplicate", "bytes": len(b)})
+
     # First validate ALL paths, then mutate; never partially apply on mismatch.
     if apply:
         for path, content in rendered.items():
