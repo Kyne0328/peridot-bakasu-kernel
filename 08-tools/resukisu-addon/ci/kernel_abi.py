@@ -26,7 +26,10 @@ def imports(module: bytes) -> list[tuple[str, int]]:
     names = module[section_names[4]:section_names[4] + section_names[5]]
     entries = []
     for section in sections:
-        require(section[4] + section[5] <= len(module), "Module section out of bounds")
+        # SHT_NOBITS (type 8, e.g. .bss) reserves memory but has no file bytes.
+        # Its sh_offset + sh_size can legitimately exceed ELF file length.
+        if section[1] != 8:
+            require(section[4] + section[5] <= len(module), "Module section out of bounds")
         if names[section[0]:].split(b"\0", 1)[0] == b"__versions":
             data = module[section[4]:section[4] + section[5]]
             require(len(data) % 64 == 0, "Invalid __versions bounds")
