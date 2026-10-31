@@ -1,0 +1,63 @@
+name: BakaSU UAPI6 direct LKM candidate
+
+on:
+  push:
+    branches: [experiment/kamios-v18-bakasu-uapi6-lkm]
+    paths: [.github/workflows/kamios-direct-lkm.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lkm:
+    name: Compile kernelsu.ko without full kernel build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    container:
+      image: ghcr.io/ylarod/ddk-min:android14-6.1-20260828
+      options: --privileged
+    env:
+      BAKASU_COMMIT: 5785bdb8091304322f597f67d50e0b79f9815cb2
+      TARGET_RELEASE: 6.1.176-Vibranium-V18+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin BakaSU UAPI6 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/Baka-SU/BakaSU.git BakaSU
+          git -C BakaSU fetch --depth 1 origin "$BAKASU_COMMIT"
+          git -C BakaSU checkout --detach "$BAKASU_COMMIT"
+          test "$(git -C BakaSU rev-parse HEAD)" = "$BAKASU_COMMIT"
+          grep -q 'KERNEL_SU_UAPI_VERSION = 6' BakaSU/uapi/supercall.h
+      - name: Build BakaSU LKM only using official android14-6.1 DDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd BakaSU/kernel
+          CONFIG_KSU=m CONFIG_KSU_TRACEPOINT_HOOK=y CONFIG_KSU_MULTI_MANAGER_SUPPORT=y CC=clang make -j2
+          test -s kernelsu.ko
+      - name: Inspect build and distinguish generic GKI from Kamios V18
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidate
+          cp BakaSU/kernel/kernelsu.ko candidate/kernelsu.ko
+          (strings candidate/kernelsu.ko | grep -F 'vermagic=' || true) > candidate/module-vermagic.txt
+          test -s candidate/module-vermagic.txt
+          sha256sum candidate/kernelsu.ko > candidate/SHA256SUMS.txt
+          if grep -Fq "$TARGET_RELEASE" candidate/module-vermagic.txt; then
+            printf '%s\n' 'Kernel release string matches Kamios V18. Module ABI CRCs and actual loader remain unverified; NOT INSTALL-QUALIFIED.' > candidate/STATUS.txt
+          else
+            printf '%s\n' 'Generic android14-6.1 LKM. Kernel release DOES NOT MATCH Kamios Vibranium V18; DO NOT INSTALL. Requires matching Vibranium build and symbol CRCs.' > candidate/STATUS.txt
+          fi
+          cat candidate/module-vermagic.txt
+          cat candidate/STATUS.txt
+      - name: Export reference candidate for offline ABI research
+        uses: actions/upload-artifact@v4
+        with:
+          name: bakasu-uapi6-android14-6.1-direct-lkm-NOT-FOR-FLASH
+          path: candidate/
+          retention-days: 14
+          if-no-files-found: error
