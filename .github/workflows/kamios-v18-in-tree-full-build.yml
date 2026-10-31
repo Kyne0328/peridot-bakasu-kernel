@@ -7,6 +7,7 @@ on:
       - '.github/workflows/kamios-v18-in-tree-full-build.yml'
       - '08-tools/resukisu-addon/build_kamios_v18_in_tree.sh'
       - '08-tools/resukisu-addon/port_susfs_v18.py'
+      - '08-tools/resukisu-addon/apply_wildkernels_v18.sh'
       - 'configs/kamios-v1.1-20261027-vibranium-v18.config'
   workflow_dispatch:
 
@@ -56,6 +57,7 @@ jobs:
         env:
           BUILD_KERNEL: "1"
           JOBS: "2"
+          ENABLE_WILDKERNELS: "1"
         run: |
           set -euo pipefail
           mkdir -p build-logs
@@ -71,6 +73,8 @@ jobs:
           test -s "$OUT/.config"
           grep -qx 'CONFIG_KSU=y' "$OUT/.config"
           grep -qx 'CONFIG_KSU_SUSFS=y' "$OUT/.config"
+          grep -qx 'CONFIG_NTSYNC=m' "$OUT/.config"
+          test -s "$OUT/drivers/misc/ntsync.ko"
           grep -qx 'CONFIG_LTO_CLANG_FULL=y' "$OUT/.config"
           grep -qx 'CONFIG_MODULE_SIG_PROTECT=y' "$OUT/.config"
           grep -qx '6.1.176-Vibranium-V18+' kamios-v18-build/report/kernelrelease.txt
@@ -78,6 +82,7 @@ jobs:
           sha256sum "$OUT/arch/arm64/boot/Image" "$OUT/vmlinux" "$OUT/Module.symvers" "$OUT/.config" | tee build-logs/SHA256SUMS.txt
           mkdir -p deliverable
           cp "$OUT/arch/arm64/boot/Image" "$OUT/Module.symvers" "$OUT/.config" deliverable/
+          cp "$OUT/drivers/misc/ntsync.ko" deliverable/
           cp -a kamios-v18-build/report/. deliverable/
           cp build-logs/SHA256SUMS.txt deliverable/
           printf '%s\n' \
