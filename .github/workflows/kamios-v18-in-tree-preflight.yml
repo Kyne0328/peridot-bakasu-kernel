@@ -1,0 +1,49 @@
+name: Kamios Vibranium V18 in-tree integration preflight
+
+on:
+  push:
+    branches: [experiment/kamios-v18-in-tree-bakasu]
+    paths:
+      - '.github/workflows/kamios-v18-in-tree-preflight.yml'
+      - '08-tools/resukisu-addon/build_kamios_v18_in_tree.sh'
+      - 'configs/kamios-v1.1-20261027-vibranium-v18.config'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-qualification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends git patch make bc bison flex libssl-dev libelf-dev python3 curl xz-utils
+      - name: Pin Clang 21 used in running Kamios kernel
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 -o /tmp/clang.tar.gz \
+            https://github.com/SA9990/Toolchain/releases/download/clang-r563880c/clang-r563880c.tar.gz
+          echo '57b456636aa9c3f5e159bc1dd6eddd7c6de654281cad84376e408a5d35f91bab  /tmp/clang.tar.gz' | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/clang"
+          tar xf /tmp/clang.tar.gz -C "$RUNNER_TEMP/clang"
+          CLANG_DIR="$(find "$RUNNER_TEMP/clang" -type f -path '*/bin/clang' -printf '%h\n' | head -1)"
+          test -x "$CLANG_DIR/clang"
+          echo "$CLANG_DIR" >> "$GITHUB_PATH"
+          rm /tmp/clang.tar.gz
+      - name: Integrate pinned source, BakaSU UAPI6 and SUSFS without compiling Image
+        env:
+          BUILD_KERNEL: "0"
+        run: bash 08-tools/resukisu-addon/build_kamios_v18_in_tree.sh "$GITHUB_WORKSPACE/kamios-v18-stage"
+      - name: Upload preflight reports even if patch verification fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kamios-v18-in-tree-source-preflight
+          path: kamios-v18-stage/report/
+          if-no-files-found: warn
+          retention-days: 14
