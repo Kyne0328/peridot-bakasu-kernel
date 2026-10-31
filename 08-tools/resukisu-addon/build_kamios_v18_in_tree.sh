@@ -37,12 +37,12 @@ if test ! -s "$PATCH"; then PATCH="$P/50_add_susfs_in_kernel-6.1.patch"; fi
 test -s "$PATCH" || { echo "SUSFS 6.1 patch not found" >&2; exit 3; }
 cp -a "$P/fs/." "$SRC/fs/"
 cp -a "$P/include/linux/." "$SRC/include/linux/"
-if ! (cd "$SRC" && patch -p1 --dry-run --forward < "$PATCH") > "$STAGE/report/susfs-check.txt" 2>&1; then
+if ! (cd "$SRC" && patch -p1 --fuzz=0 --dry-run --forward < "$PATCH") > "$STAGE/report/susfs-check.txt" 2>&1; then
   cat "$STAGE/report/susfs-check.txt"
   echo "SUSFS needs source-specific hand-port; refusing fuzzy patch" >&2
   exit 4
 fi
-(cd "$SRC" && patch -p1 --forward < "$PATCH")
+(cd "$SRC" && patch -p1 --fuzz=0 --forward < "$PATCH")
 git -C "$SRC" diff --check
 
 cp "$CONFIG" "$OUT/.config"
@@ -57,7 +57,7 @@ grep -qx "CONFIG_MODULE_SIG_PROTECT=y" "$OUT/.config"
 grep -qx "$RELEASE" "$STAGE/report/kernelrelease.txt"
 git -C "$SRC" diff --stat > "$STAGE/report/diffstat.txt"
 printf 'preflight OK: V18 candidate + pinned BakaSU UAPI6 + SUSFS patch + stock Full LTO\n'
-BUILD_KERNEL=0
+BUILD_KERNEL="${BUILD_KERNEL:-0}"
 if test "$BUILD_KERNEL" = 1; then
   make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 -j2 Image modules
   test -s "$OUT/arch/arm64/boot/Image" && test -s "$OUT/Module.symvers"
