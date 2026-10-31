@@ -35,6 +35,8 @@ P="$STAGE/susfs4ksu/kernel_patches"
 PATCH="$P/50_add_susfs_in_gki-android14-6.1.patch"
 if test ! -s "$PATCH"; then PATCH="$P/50_add_susfs_in_kernel-6.1.patch"; fi
 test -s "$PATCH" || { echo "SUSFS 6.1 patch not found" >&2; exit 3; }
+python3 "$ROOT/08-tools/resukisu-addon/port_susfs_v18.py" "$PATCH" "$STAGE/report/susfs-v18-rebased.patch"
+PATCH="$STAGE/report/susfs-v18-rebased.patch"
 cp -a "$P/fs/." "$SRC/fs/"
 cp -a "$P/include/linux/." "$SRC/include/linux/"
 if ! (cd "$SRC" && patch -p1 --fuzz=0 --dry-run --forward < "$PATCH") > "$STAGE/report/susfs-check.txt" 2>&1; then
