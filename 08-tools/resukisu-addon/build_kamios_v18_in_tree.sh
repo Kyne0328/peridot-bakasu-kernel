@@ -46,7 +46,8 @@ if test "${ENABLE_KSU:-1}" = 0; then
 else
   grep -qx "CONFIG_KSU=y" "$OUT/.config"
 fi
-grep -qx "# CONFIG_KSU_SUSFS is not set" "$OUT/.config"
+# KSU_SUSFS is not defined when KSU is disabled. Disabled and absent are equivalent.
+! grep -qx "CONFIG_KSU_SUSFS=y" "$OUT/.config"
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then grep -qx "CONFIG_NTSYNC=y" "$OUT/.config"; fi
 grep -qx "CONFIG_LTO_CLANG_FULL=y" "$OUT/.config"
 grep -qx "CONFIG_MODVERSIONS=y" "$OUT/.config"
