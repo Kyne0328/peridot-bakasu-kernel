@@ -1,0 +1,99 @@
+name: Kamios Vibranium V18 BakaSU UAPI6 module-only experiment
+
+on:
+  push:
+    branches: [experiment/kamios-v18-bakasu-uapi6-lkm]
+    paths: [.github/workflows/kamios-v18-module-only.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  module:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    container:
+      image: ghcr.io/ylarod/ddk-min:android14-6.1-20260828
+      options: --privileged
+    env:
+      SOURCE_COMMIT: 4b42813174f309838106763126c8d3c8f14e96b2
+      BAKASU_COMMIT: 5785bdb8091304322f597f67d50e0b79f9815cb2
+      EXPECTED_RELEASE: 6.1.176-Vibranium-V18+
+      DDK_SYMVERS: /opt/ddk/kdir/android14-6.1/Module.symvers
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin Android Clang 21 matching the Kamios kernel compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --output /tmp/clang.tar.gz \
+            https://github.com/SA9990/Toolchain/releases/download/clang-r563880c/clang-r563880c.tar.gz
+          echo '57b456636aa9c3f5e159bc1dd6eddd7c6de654281cad84376e408a5d35f91bab  /tmp/clang.tar.gz' | sha256sum -c -
+          mkdir -p /tmp/kamios-clang
+          tar -xf /tmp/clang.tar.gz -C /tmp/kamios-clang
+          CLANG_DIR="$(find /tmp/kamios-clang -type f -path '*/bin/clang' -printf '%h\n' | head -1)"
+          test -x "$CLANG_DIR/clang"
+          echo "$CLANG_DIR" >> "$GITHUB_PATH"
+          rm /tmp/clang.tar.gz
+      - name: Pin Vibranium kernel source and BakaSU UAPI6
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch 17 --single-branch https://github.com/khargosxh18/android_kernel_xiaomi_sm8635.git kernel-src
+          test "$(git -C kernel-src rev-parse HEAD)" = "$SOURCE_COMMIT"
+          git clone --depth 1 https://github.com/Baka-SU/BakaSU.git BakaSU
+          git -C BakaSU fetch --depth 1 origin "$BAKASU_COMMIT"
+          git -C BakaSU checkout --detach "$BAKASU_COMMIT"
+          test "$(git -C BakaSU rev-parse HEAD)" = "$BAKASU_COMMIT"
+          grep -q 'KERNEL_SU_UAPI_VERSION = 6' BakaSU/uapi/supercall.h
+      - name: Prepare Vibranium headers only (no Image or vmlinux build)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p kernel-out
+          cp configs/kamios-v1.1-20261027-vibranium-v18.config kernel-out/.config
+          echo '4d77d949c21ecbd14d64286c51476fae6091cfa7ed89b1642db18b8eae7258db  kernel-out/.config' | sha256sum -c -
+          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 olddefconfig
+          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 -j2 modules_prepare
+          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 -s kernelrelease | tee kernelrelease.txt
+          test "$(cat kernelrelease.txt)" = "$EXPECTED_RELEASE"
+          grep -qx 'CONFIG_MODVERSIONS=y' kernel-out/.config
+          test -s "$DDK_SYMVERS"
+          # DDK baseline CRCs are NOT a verified substitute for the symbols in
+          # the running Kamios kernel; this is a module-only feasibility build.
+          cp "$DDK_SYMVERS" kernel-out/Module.symvers
+          sha256sum "$DDK_SYMVERS" > ddk-symbol-baseline.sha256
+      - name: Compile BakaSU external LKM using prepared Vibranium headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" M="$GITHUB_WORKSPACE/BakaSU/kernel" \
+            ARCH=arm64 LLVM=1 CONFIG_KSU=m CONFIG_KSU_TRACEPOINT_HOOK=y \
+            CONFIG_KSU_MULTI_MANAGER_SUPPORT=y -j2 modules
+          test -s BakaSU/kernel/kernelsu.ko
+      - name: Offline metadata qualification (not runtime load approval)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p candidate
+          cp BakaSU/kernel/kernelsu.ko candidate/kernelsu.ko
+          (strings candidate/kernelsu.ko | grep -F 'vermagic=' || true) > candidate/vermagic.txt
+          test -s candidate/vermagic.txt
+          grep -Fq "$EXPECTED_RELEASE" candidate/vermagic.txt
+          cp ddk-symbol-baseline.sha256 candidate/
+          sha256sum candidate/kernelsu.ko > candidate/SHA256SUMS.txt
+          printf '%s\n' \
+            'EXPERIMENTAL: Kamios Vibranium 6.1.176 headers; generic GKI Android14-6.1 borrowed Module.symvers.' \
+            'Kernel release metadata matches, but imported CRCs are NOT proven identical to running Kamios.' \
+            'DO NOT INSTALL until the real Vibranium Module.symvers and loader requirements are validated.' \
+            > candidate/STATUS.txt
+          cat candidate/vermagic.txt
+          cat candidate/STATUS.txt
+      - name: Upload module-only research candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: kamios-v18-uapi6-lkm-module-only-ABI-UNVERIFIED
+          path: candidate/
+          if-no-files-found: error
+          retention-days: 14
