@@ -32,11 +32,20 @@ if test "${ENABLE_WILDKERNELS:-0}" = 1; then
   bash "$ROOT/08-tools/resukisu-addon/apply_wildkernels_v18.sh" "$SRC" "$STAGE"
 fi
 cp "$CONFIG" "$OUT/.config"
-"$SRC/scripts/config" --file "$OUT/.config" -e KSU -d KSU_SUSFS -d KSU_TRACEPOINT_HOOK -d KSU_MANUAL_HOOK -d LOCALVERSION_AUTO
+# Source-equivalence control: no BakaSU code is built when ENABLE_KSU=0.
+if test "${ENABLE_KSU:-1}" = 0; then
+  "$SRC/scripts/config" --file "$OUT/.config" -d KSU -d KSU_SUSFS -d KSU_TRACEPOINT_HOOK -d KSU_MANUAL_HOOK -d LOCALVERSION_AUTO
+else
+  "$SRC/scripts/config" --file "$OUT/.config" -e KSU -d KSU_SUSFS -d KSU_TRACEPOINT_HOOK -d KSU_MANUAL_HOOK -d LOCALVERSION_AUTO
+fi
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then "$SRC/scripts/config" --file "$OUT/.config" -e NTSYNC; fi
 make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 olddefconfig
 make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 -s kernelrelease > "$STAGE/report/kernelrelease.txt"
-grep -qx "CONFIG_KSU=y" "$OUT/.config"
+if test "${ENABLE_KSU:-1}" = 0; then
+  grep -qx "# CONFIG_KSU is not set" "$OUT/.config"
+else
+  grep -qx "CONFIG_KSU=y" "$OUT/.config"
+fi
 grep -qx "# CONFIG_KSU_SUSFS is not set" "$OUT/.config"
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then grep -qx "CONFIG_NTSYNC=y" "$OUT/.config"; fi
 grep -qx "CONFIG_LTO_CLANG_FULL=y" "$OUT/.config"
@@ -44,7 +53,7 @@ grep -qx "CONFIG_MODVERSIONS=y" "$OUT/.config"
 grep -qx "CONFIG_MODULE_SIG_PROTECT=y" "$OUT/.config"
 grep -qx "$RELEASE" "$STAGE/report/kernelrelease.txt"
 git -C "$SRC" diff --stat > "$STAGE/report/diffstat.txt"
-printf 'preflight OK: V18 candidate + pinned BakaSU UAPI6 only + stock Full LTO\n'
+printf 'preflight OK: V18 candidate + ENABLE_KSU=${ENABLE_KSU:-1} + stock Full LTO\n'
 BUILD_KERNEL="${BUILD_KERNEL:-0}"
 if test "$BUILD_KERNEL" = 1; then
   # Pinned Vibranium source has a reproducible PKCS11 host-tool bug.
