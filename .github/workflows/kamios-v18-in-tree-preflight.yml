@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/kamios-v18-in-tree-preflight.yml'
       - '08-tools/resukisu-addon/build_kamios_v18_in_tree.sh'
+      - '08-tools/resukisu-addon/port_susfs_v18.py'
       - 'configs/kamios-v1.1-20261027-vibranium-v18.config'
   workflow_dispatch:
 
