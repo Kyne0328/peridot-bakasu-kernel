@@ -52,12 +52,12 @@ if test "${ENABLE_WILDKERNELS:-0}" = 1; then
 fi
 cp "$CONFIG" "$OUT/.config"
 "$SRC/scripts/config" --file "$OUT/.config" -e KSU -e KSU_SUSFS -d KSU_TRACEPOINT_HOOK -d KSU_MANUAL_HOOK -d LOCALVERSION_AUTO
-if test "${ENABLE_WILDKERNELS:-0}" = 1; then "$SRC/scripts/config" --file "$OUT/.config" -m NTSYNC; fi
+if test "${ENABLE_WILDKERNELS:-0}" = 1; then "$SRC/scripts/config" --file "$OUT/.config" -e NTSYNC; fi
 make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 olddefconfig
 make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 -s kernelrelease > "$STAGE/report/kernelrelease.txt"
 grep -qx "CONFIG_KSU=y" "$OUT/.config"
 grep -qx "CONFIG_KSU_SUSFS=y" "$OUT/.config"
-if test "${ENABLE_WILDKERNELS:-0}" = 1; then grep -qx "CONFIG_NTSYNC=m" "$OUT/.config"; fi
+if test "${ENABLE_WILDKERNELS:-0}" = 1; then grep -qx "CONFIG_NTSYNC=y" "$OUT/.config"; fi
 grep -qx "CONFIG_LTO_CLANG_FULL=y" "$OUT/.config"
 grep -qx "CONFIG_MODVERSIONS=y" "$OUT/.config"
 grep -qx "CONFIG_MODULE_SIG_PROTECT=y" "$OUT/.config"
