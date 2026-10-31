@@ -108,10 +108,11 @@ jobs:
           chmod 755 ak3/anykernel.sh
           cat > ak3/READ-ME-KAMIOS-V18.txt <<'EOF'
           POCO F6 peridot | Kamios v1.1 Android 17 | Vibranium V18
-          Compiled: BakaSU UAPI6 + SUSFS ONLY, no optional WildKernels patches.\n          No NTSync, Unicode or ARM64 prefetch WildKernels patches.
+          Compiled: BakaSU UAPI6 + SUSFS ONLY, no optional WildKernels patches.
+          No NTSync, Unicode or ARM64 prefetch WildKernels patches.
           Full stock module symbol CRC match.
           Kernel Image SHA256:
-          a7553b02b86928f28e95fb396de15de4f8ee29f3e055389aa56d4aedb7cf0fdd
+          5dadf7eab8ce403cd71e8c47e2a68d6eb22ce3bb5b4ed2a357f7e351d4451906
           This is a recovery flash ZIP, but FIRST DEVICE BOOT IS NOT TESTED.
           Preserves other boot sections, active slot boot partition only.
           Does not write inactive slot, init_boot, vendor_boot, or userdata.
@@ -136,7 +137,7 @@ jobs:
           unzip -Z1 dist/*.zip | grep -qx 'Image'
           test "$(unzip -p dist/*.zip tools/busybox | od -An -tu1 -j4 -N1 | tr -d ' ')" = 2
           test "$(unzip -p dist/*.zip tools/magiskboot | od -An -tu1 -j4 -N1 | tr -d ' ')" = 2
-          unzip -p dist/*.zip Image | sha256sum -c <(printf '%s\n' 'a7553b02b86928f28e95fb396de15de4f8ee29f3e055389aa56d4aedb7cf0fdd  -')
+          unzip -p dist/*.zip Image | sha256sum -c <(printf '%s\n' '5dadf7eab8ce403cd71e8c47e2a68d6eb22ce3bb5b4ed2a357f7e351d4451906  -')
           unzip -p dist/*.zip anykernel.sh | grep -Fxq 'IS_SLOT_DEVICE=1;'
           unzip -p dist/*.zip anykernel.sh | grep -Fxq 'SLOT_SELECT=active;'
           sha256sum dist/*.zip
