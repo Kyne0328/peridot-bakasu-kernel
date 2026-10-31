@@ -52,6 +52,30 @@ jobs:
           grep -q '^VERSION = 6$' kernel-src/Makefile
           grep -q '^SUBLEVEL = 176$' kernel-src/Makefile
           df -h .
+      - name: Fix pinned Vibranium PKCS11 key_pass compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This source revision declares key_pass only under USE_PKCS11_ENGINE,
+          # but the PKCS11 branch references it unconditionally. Keep the
+          # PKCS11 PIN behavior intact when the engine option is enabled.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("kernel-src/certs/extract-cert.c")
+          source = p.read_text()
+          before = (
+              '\t\tif (key_pass)\n'
+              '\t\t\tERR(!ENGINE_ctrl_cmd_string(e, "PIN", key_pass, 0), "Set PKCS#11 PIN");'
+          )
+          after = '#ifdef USE_PKCS11_ENGINE\n' + before + '\n#endif'
+          if source.count(before) != 1 or '#ifdef USE_PKCS11_ENGINE\n' + before in source:
+              raise SystemExit('Unexpected upstream PKCS11 code; refusing to apply patch')
+          p.write_text(source.replace(before, after, 1))
+          assert p.read_text().count(after) == 1
+          print("Patched certs/extract-cert.c with matching PKCS11 PIN guard")
+          PY
+          git -C kernel-src diff --check
+          git -C kernel-src diff -- certs/extract-cert.c
       - name: Prepare kernel configuration and preserve ABI
         shell: bash
         run: |
