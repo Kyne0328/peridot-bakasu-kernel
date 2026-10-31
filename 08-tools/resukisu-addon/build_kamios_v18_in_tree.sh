@@ -31,6 +31,43 @@ printf '\nsource "drivers/kernelsu/Kconfig"\n' >> "$SRC/drivers/Kconfig"
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then
   bash "$ROOT/08-tools/resukisu-addon/apply_wildkernels_v18.sh" "$SRC" "$STAGE"
 fi
+# Instrument ASoC missing component / deferred PCM link on this diagnostics-only branch.
+# This changes diagnostic printk levels, not error codes, module interfaces or
+# hardware controls. Always check exact source context before applying.
+python3 - "$SRC/sound/soc/soc-core.c" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1])
+source=p.read_text()
+patterns=[
+    ('dev_dbg(card->dev,\n\t\t\t\t"ASoC: codec component %s not found for link %s\\n",',
+     'dev_err_ratelimited(card->dev,\n\t\t\t\t"ASoC_DIAG: codec component %s not found for link %s\\n",'),
+    ('dev_dbg(card->dev,\n\t\t\t\t"ASoC: platform component %s not found for link %s\\n",',
+     'dev_err_ratelimited(card->dev,\n\t\t\t\t"ASoC_DIAG: platform component %s not found for link %s\\n",'),
+    ('dev_dbg(card->dev,\n\t\t\t\t"ASoC: cpu component %s not found for link %s\\n",',
+     'dev_err_ratelimited(card->dev,\n\t\t\t\t"ASoC_DIAG: cpu component %s not found for link %s\\n",'),
+    ('\t\tret = snd_soc_add_pcm_runtime(card, dai_link);\n\t\tif (ret < 0)\n\t\t\tgoto probe_end;',
+     '\t\tret = snd_soc_add_pcm_runtime(card, dai_link);\n'
+     '\t\tif (ret < 0) {\n'
+     '\t\t\tdev_err_ratelimited(card->dev,\n'
+     '\t\t\t\t"ASoC_DIAG: card %s DAI link %s failed: %d\\n",\n'
+     '\t\t\t\tcard->name, dai_link->name, ret);\n'
+     '\t\t\tgoto probe_end;\n\t\t}'),
+    ('probe_end:\n\tif (ret < 0)\n\t\tsoc_cleanup_card_resources(card);',
+     'probe_end:\n\tif (ret < 0) {\n'
+     '\t\tdev_err_ratelimited(card->dev,\n'
+     '\t\t\t"ASoC_DIAG: snd_soc_bind_card %s failed: %d\\n",\n'
+     '\t\t\tcard->name, ret);\n'
+     '\t\tsoc_cleanup_card_resources(card);\n\t}')
+]
+for before,after in patterns:
+    if source.count(before)!=1 or after in source:
+        raise SystemExit('ASoC diagnostic source context mismatch: '+repr(before[:95]))
+    source=source.replace(before,after,1)
+p.write_text(source)
+print('ASoC diagnostic points installed:',len(patterns))
+PY
+git -C "$SRC" diff --check
 cp "$CONFIG" "$OUT/.config"
 "$SRC/scripts/config" --file "$OUT/.config" -e KSU -d KSU_SUSFS -d KSU_TRACEPOINT_HOOK -d KSU_MANUAL_HOOK -d LOCALVERSION_AUTO
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then "$SRC/scripts/config" --file "$OUT/.config" -e NTSYNC; fi
