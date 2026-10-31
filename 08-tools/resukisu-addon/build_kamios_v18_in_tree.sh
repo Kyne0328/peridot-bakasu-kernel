@@ -27,43 +27,24 @@ ln -s ../KernelSU/kernel "$SRC/drivers/kernelsu"
 printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> "$SRC/drivers/Makefile"
 printf '\nsource "drivers/kernelsu/Kconfig"\n' >> "$SRC/drivers/Kconfig"
 
-git clone --depth=1 --branch gki-android14-6.1 https://gitlab.com/simonpunk/susfs4ksu.git "$STAGE/susfs4ksu"
-git -C "$STAGE/susfs4ksu" fetch --depth=1 origin "$SUS"
-git -C "$STAGE/susfs4ksu" checkout --detach "$SUS"
-test "$(git -C "$STAGE/susfs4ksu" rev-parse HEAD)" = "$SUS"
-P="$STAGE/susfs4ksu/kernel_patches"
-PATCH="$P/50_add_susfs_in_gki-android14-6.1.patch"
-if test ! -s "$PATCH"; then PATCH="$P/50_add_susfs_in_kernel-6.1.patch"; fi
-test -s "$PATCH" || { echo "SUSFS 6.1 patch not found" >&2; exit 3; }
-python3 "$ROOT/08-tools/resukisu-addon/port_susfs_v18.py" "$PATCH" "$STAGE/report/susfs-v18-rebased.patch"
-PATCH="$STAGE/report/susfs-v18-rebased.patch"
-cp -a "$P/fs/." "$SRC/fs/"
-cp -a "$P/include/linux/." "$SRC/include/linux/"
-if ! (cd "$SRC" && patch -p1 --fuzz=0 --dry-run --forward < "$PATCH") > "$STAGE/report/susfs-check.txt" 2>&1; then
-  cat "$STAGE/report/susfs-check.txt"
-  echo "SUSFS needs source-specific hand-port; refusing fuzzy patch" >&2
-  exit 4
-fi
-(cd "$SRC" && patch -p1 --fuzz=0 --forward < "$PATCH")
-git -C "$SRC" diff --check
-
+# Audio-boot isolation: no SUSFS kernel patch set; retain BakaSU UAPI6 only.
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then
   bash "$ROOT/08-tools/resukisu-addon/apply_wildkernels_v18.sh" "$SRC" "$STAGE"
 fi
 cp "$CONFIG" "$OUT/.config"
-"$SRC/scripts/config" --file "$OUT/.config" -e KSU -e KSU_SUSFS -d KSU_TRACEPOINT_HOOK -d KSU_MANUAL_HOOK -d LOCALVERSION_AUTO
+"$SRC/scripts/config" --file "$OUT/.config" -e KSU -d KSU_SUSFS -d KSU_TRACEPOINT_HOOK -d KSU_MANUAL_HOOK -d LOCALVERSION_AUTO
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then "$SRC/scripts/config" --file "$OUT/.config" -e NTSYNC; fi
 make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 olddefconfig
 make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 -s kernelrelease > "$STAGE/report/kernelrelease.txt"
 grep -qx "CONFIG_KSU=y" "$OUT/.config"
-grep -qx "CONFIG_KSU_SUSFS=y" "$OUT/.config"
+grep -qx "# CONFIG_KSU_SUSFS is not set" "$OUT/.config"
 if test "${ENABLE_WILDKERNELS:-0}" = 1; then grep -qx "CONFIG_NTSYNC=y" "$OUT/.config"; fi
 grep -qx "CONFIG_LTO_CLANG_FULL=y" "$OUT/.config"
 grep -qx "CONFIG_MODVERSIONS=y" "$OUT/.config"
 grep -qx "CONFIG_MODULE_SIG_PROTECT=y" "$OUT/.config"
 grep -qx "$RELEASE" "$STAGE/report/kernelrelease.txt"
 git -C "$SRC" diff --stat > "$STAGE/report/diffstat.txt"
-printf 'preflight OK: V18 candidate + pinned BakaSU UAPI6 + SUSFS patch + stock Full LTO\n'
+printf 'preflight OK: V18 candidate + pinned BakaSU UAPI6 only + stock Full LTO\n'
 BUILD_KERNEL="${BUILD_KERNEL:-0}"
 if test "$BUILD_KERNEL" = 1; then
   # Pinned Vibranium source has a reproducible PKCS11 host-tool bug.
