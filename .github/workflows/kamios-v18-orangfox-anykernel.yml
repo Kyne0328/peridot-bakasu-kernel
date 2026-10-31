@@ -56,9 +56,13 @@ jobs:
             chmod 755 "ak3/tools/$tool"
             readelf -h "ak3/tools/$tool" | grep -q 'Class:.*ELF64'
             readelf -h "ak3/tools/$tool" | grep -q 'Machine:.*AArch64'
-            if readelf -l "ak3/tools/$tool" | grep -q INTERP; then
-              echo "Non-static tool: $tool" >&2
-              exit 1
+            # BusyBox and magiskboot run before/while repacking; they must
+            # not depend on OrangeFox's dynamic-linker environment.
+            if [[ "$tool" == busybox || "$tool" == magiskboot ]]; then
+              if readelf -l "ak3/tools/$tool" | grep -q INTERP; then
+                echo "Non-static critical tool: $tool" >&2
+                exit 1
+              fi
             fi
             echo "Checked $tool: $(sha256sum "ak3/tools/$tool")"
           done
