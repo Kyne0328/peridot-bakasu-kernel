@@ -41,6 +41,33 @@ jobs:
           test "$(git -C ak3 rev-parse HEAD)" = 41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1
           test -s ak3/tools/ak3-core.sh
           test -s ak3/META-INF/com/google/android/update-binary
+      - name: Replace ARM32 default tools with pinned official ARM64 tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The upstream AnyKernel3 master template contains ARM32-only tools.
+          # OrangeFox on 64-bit-only peridot cannot execute those binaries.
+          git clone -q --single-branch --branch arm64-tools https://github.com/osm0sis/AnyKernel3.git ak3-arm64-tools
+          git -C ak3-arm64-tools checkout -q --detach cc7d2cee9b1b4298f6ab8666eb4486dea342748c
+          test "$(git -C ak3-arm64-tools rev-parse HEAD)" = cc7d2cee9b1b4298f6ab8666eb4486dea342748c
+          for tool in busybox magiskboot magiskpolicy httools_static lptools_static fec snapshotupdater_static; do
+            test -s "ak3-arm64-tools/$tool"
+            cp "ak3-arm64-tools/$tool" "ak3/tools/$tool"
+            chmod 755 "ak3/tools/$tool"
+            readelf -h "ak3/tools/$tool" | grep -q 'Class:.*ELF64'
+            readelf -h "ak3/tools/$tool" | grep -q 'Machine:.*AArch64'
+            if readelf -l "ak3/tools/$tool" | grep -q INTERP; then
+              echo "Non-static tool: $tool" >&2
+              exit 1
+            fi
+            echo "Checked $tool: $(sha256sum "ak3/tools/$tool")"
+          done
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+          # Exercise the exact busybox binary that AnyKernel's setup_bb uses.
+          qemu-aarch64-static ak3/tools/busybox true
+          qemu-aarch64-static ak3/tools/busybox chmod --help >/dev/null
+          rm -rf ak3-arm64-tools
       - name: Configure only active peridot boot kernel replacement
         shell: bash
         run: |
@@ -97,12 +124,14 @@ jobs:
           mkdir -p dist
           rm -rf ak3/.git ak3/.github
           cd ak3
-          zip -q -r -9 ../dist/Kamios-V18-Peridot-BakaSU-UAPI6-SUSFS-WildKernels-OrangeFox-UNTESTED.zip anykernel.sh Image READ-ME-KAMIOS-V18.txt tools META-INF
+          zip -q -r -9 ../dist/Kamios-V18-Peridot-BakaSU-UAPI6-SUSFS-WildKernels-OrangeFox-ARM64-BOOT-UNTESTED.zip anykernel.sh Image READ-ME-KAMIOS-V18.txt tools META-INF
           cd ..
           unzip -t dist/*.zip | tail -3
           unzip -Z1 dist/*.zip | grep -qx 'META-INF/com/google/android/update-binary'
           unzip -Z1 dist/*.zip | grep -qx 'META-INF/com/google/android/updater-script'
           unzip -Z1 dist/*.zip | grep -qx 'Image'
+          test "$(unzip -p dist/*.zip tools/busybox | od -An -tu1 -j4 -N1 | tr -d ' ')" = 2
+          test "$(unzip -p dist/*.zip tools/magiskboot | od -An -tu1 -j4 -N1 | tr -d ' ')" = 2
           unzip -p dist/*.zip Image | sha256sum -c <(printf '%s\n' 'a7553b02b86928f28e95fb396de15de4f8ee29f3e055389aa56d4aedb7cf0fdd  -')
           unzip -p dist/*.zip anykernel.sh | grep -Fxq 'IS_SLOT_DEVICE=1;'
           unzip -p dist/*.zip anykernel.sh | grep -Fxq 'SLOT_SELECT=active;'
@@ -111,7 +140,7 @@ jobs:
       - name: Upload OrangeFox ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: Kamios-V18-Peridot-BakaSU-SUSFS-WildKernels-OrangeFox-UNTESTED
+          name: Kamios-V18-BakaSU-WildKernels-OrangeFox-ARM64-BOOT-UNTESTED
           path: dist/*.zip
           if-no-files-found: error
           retention-days: 30
