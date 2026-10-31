@@ -7,6 +7,7 @@ on:
       - '.github/workflows/kamios-v18-in-tree-preflight.yml'
       - '08-tools/resukisu-addon/build_kamios_v18_in_tree.sh'
       - '08-tools/resukisu-addon/port_susfs_v18.py'
+      - '08-tools/resukisu-addon/probe_wildkernels_v18.sh'
       - 'configs/kamios-v1.1-20261027-vibranium-v18.config'
   workflow_dispatch:
 
@@ -40,6 +41,8 @@ jobs:
         env:
           BUILD_KERNEL: "0"
         run: bash 08-tools/resukisu-addon/build_kamios_v18_in_tree.sh "$GITHUB_WORKSPACE/kamios-v18-stage"
+      - name: Probe compatible WildKernels patches without changing kernel
+        run: bash 08-tools/resukisu-addon/probe_wildkernels_v18.sh "$GITHUB_WORKSPACE/kamios-v18-stage"
       - name: Upload preflight reports even if patch verification fails
         if: always()
         uses: actions/upload-artifact@v4
