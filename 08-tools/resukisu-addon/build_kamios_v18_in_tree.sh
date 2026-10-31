@@ -61,6 +61,18 @@ git -C "$SRC" diff --stat > "$STAGE/report/diffstat.txt"
 printf 'preflight OK: V18 candidate + pinned BakaSU UAPI6 + SUSFS patch + stock Full LTO\n'
 BUILD_KERNEL="${BUILD_KERNEL:-0}"
 if test "$BUILD_KERNEL" = 1; then
+  # Pinned Vibranium source has a reproducible PKCS11 host-tool bug.
+  # Fail closed if upstream code changed.
+  python3 - "$SRC/certs/extract-cert.c" <<'PY'
+from pathlib import Path
+import sys
+p=Path(sys.argv[1]); source=p.read_text()
+before='\t\tif (key_pass)\n\t\t\tERR(!ENGINE_ctrl_cmd_string(e, "PIN", key_pass, 0), "Set PKCS#11 PIN");'
+after='#ifdef USE_PKCS11_ENGINE\n'+before+'\n#endif'
+if source.count(before)!=1 or after in source:
+    raise SystemExit("Unexpected certs/extract-cert.c; refusing PKCS11 patch")
+p.write_text(source.replace(before, after, 1))
+PY
   make -C "$SRC" O="$OUT" ARCH=arm64 LLVM=1 -j2 Image modules
   test -s "$OUT/arch/arm64/boot/Image" && test -s "$OUT/Module.symvers"
   sha256sum "$OUT/arch/arm64/boot/Image" "$OUT/Module.symvers" > "$STAGE/report/SHA256SUMS.txt"
