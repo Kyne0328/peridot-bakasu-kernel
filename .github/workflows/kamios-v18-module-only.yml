@@ -56,6 +56,12 @@ jobs:
           echo '4d77d949c21ecbd14d64286c51476fae6091cfa7ed89b1642db18b8eae7258db  kernel-out/.config' | sha256sum -c -
           make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 olddefconfig
           make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 -j2 modules_prepare
+          # External BakaSU includes SELinux internals: modules_prepare does not
+          # populate these generated policy interface headers on this tree.
+          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 scripts/selinux/genheaders/genheaders
+          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 security/selinux/flask.h
+          test -s kernel-out/security/selinux/flask.h
+          test -s kernel-out/security/selinux/av_permissions.h
           make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 -s kernelrelease | tee kernelrelease.txt
           test "$(cat kernelrelease.txt)" = "$EXPECTED_RELEASE"
           grep -qx 'CONFIG_MODVERSIONS=y' kernel-out/.config
