@@ -1,0 +1,110 @@
+name: Build KamiOS V18 BakaSU ASoC Audio Diagnostics
+
+on:
+  push:
+    branches: [experiment/kamios-v18-asoc-diagnostics]
+    paths:
+      - '.github/workflows/kamios-v18-asoc-diagnostics-build.yml'
+      - '08-tools/resukisu-addon/build_kamios_v18_in_tree.sh'
+      - '08-tools/resukisu-addon/port_susfs_v18.py'
+      - '08-tools/resukisu-addon/apply_wildkernels_v18.sh'
+      - 'configs/kamios-v1.1-20261027-vibranium-v18.config'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 320
+    env:
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare build dependencies and constrained swap
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends bc bison flex git make patch python3 curl xz-utils libssl-dev libelf-dev dwarves cpio rsync zstd lz4
+          df -h .
+          free -h
+          if [ "$(df -Pk /mnt | awk 'NR==2 {print $4}')" -gt 6500000 ]; then
+            sudo fallocate -l 4096M /mnt/kamios-build.swap
+            sudo chmod 600 /mnt/kamios-build.swap
+            sudo mkswap /mnt/kamios-build.swap
+            sudo swapon /mnt/kamios-build.swap
+          fi
+          free -h
+      - name: Acquire verified Android Clang r563880c
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 -o /tmp/clang.tar.gz \
+            https://github.com/SA9990/Toolchain/releases/download/clang-r563880c/clang-r563880c.tar.gz
+          echo '57b456636aa9c3f5e159bc1dd6eddd7c6de654281cad84376e408a5d35f91bab  /tmp/clang.tar.gz' | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/clang"
+          tar xf /tmp/clang.tar.gz -C "$RUNNER_TEMP/clang"
+          CLANG_DIR="$(find "$RUNNER_TEMP/clang" -type f -path '*/bin/clang' -printf '%h\n' | head -1)"
+          test -x "$CLANG_DIR/clang"
+          echo "$CLANG_DIR" >> "$GITHUB_PATH"
+          "$CLANG_DIR/clang" --version | head -3
+          rm /tmp/clang.tar.gz
+          df -h .
+      - name: Build in-tree BakaSU UAPI6 and SUSFS with Kamios V18 stock config
+        shell: bash
+        env:
+          BUILD_KERNEL: "1"
+          JOBS: "2"
+          ENABLE_WILDKERNELS: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p build-logs
+          bash 08-tools/resukisu-addon/build_kamios_v18_in_tree.sh "$GITHUB_WORKSPACE/kamios-v18-build" 2>&1 | tee build-logs/full-build.log
+      - name: Validate kernel and symbol output
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUT=kamios-v18-build/out
+          test -s "$OUT/arch/arm64/boot/Image"
+          test -s "$OUT/Module.symvers"
+          test -s "$OUT/vmlinux"
+          test -s "$OUT/.config"
+          printf '%s\n' '=== kernel feature qualification ==='
+          grep -E '^(CONFIG_(KSU|NTSYNC|LTO_CLANG_FULL|MODULE_SIG_PROTECT)[_=]|# CONFIG_(KSU|NTSYNC)_)' "$OUT/.config" || true
+          grep -qx 'CONFIG_KSU=y' "$OUT/.config"
+          # KSU_SUSFS and NTSYNC may be entirely absent from Kconfig; absence is disabled.
+          ! grep -qx 'CONFIG_KSU_SUSFS=y' "$OUT/.config"
+          ! grep -qx 'CONFIG_NTSYNC=y' "$OUT/.config"
+          grep -qx 'CONFIG_LTO_CLANG_FULL=y' "$OUT/.config"
+          grep -qx 'CONFIG_MODULE_SIG_PROTECT=y' "$OUT/.config"
+          grep -qx '6.1.176-Vibranium-V18+' kamios-v18-build/report/kernelrelease.txt
+          file "$OUT/arch/arm64/boot/Image" "$OUT/vmlinux"
+          sha256sum "$OUT/arch/arm64/boot/Image" "$OUT/vmlinux" "$OUT/Module.symvers" "$OUT/.config" | tee build-logs/SHA256SUMS.txt
+          mkdir -p deliverable
+          cp "$OUT/arch/arm64/boot/Image" "$OUT/Module.symvers" "$OUT/.config" deliverable/
+          cp -a kamios-v18-build/report/. deliverable/
+          cp build-logs/SHA256SUMS.txt deliverable/
+          printf '%s\n' \
+            'Build-only unsigned kernel Image, NOT a boot.img and NOT FLASH-QUALIFIED.' \
+            'Kernel source family matches Vibranium; exact KamiOS V18 source identity and shipped vendor module KMI NOT yet proven.' \
+            'No auto-install, no flashing, no changes to live POCO F6.' \
+            > deliverable/READ-ME-FIRST.txt
+      - name: Upload full build logs (even on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kamios-v18-bakasu-only-asoc-diag-logs
+          path: |
+            build-logs/
+            kamios-v18-build/report/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload kernel Image and module ABI database
+        uses: actions/upload-artifact@v4
+        with:
+          name: kamios-v18-bakasu-only-asoc-diag-image-NOT-FLASH-QUALIFIED
+          path: deliverable/
+          if-no-files-found: error
+          retention-days: 30
