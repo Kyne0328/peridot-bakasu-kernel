@@ -56,10 +56,13 @@ jobs:
           echo '4d77d949c21ecbd14d64286c51476fae6091cfa7ed89b1642db18b8eae7258db  kernel-out/.config' | sha256sum -c -
           make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 olddefconfig
           make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 -j2 modules_prepare
-          # External BakaSU includes SELinux internals: modules_prepare does not
-          # populate these generated policy interface headers on this tree.
-          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 scripts/selinux/genheaders/genheaders
-          make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 security/selinux/flask.h
+          # The in-tree SELinux build normally generates these. External modules
+          # require the headers, but the top-level modules_prepare target omits them.
+          mkdir -p kernel-out/security/selinux
+          clang -I kernel-src/include/uapi -I kernel-src/include \
+            -I kernel-src/security/selinux/include \
+            kernel-src/scripts/selinux/genheaders/genheaders.c -o kernel-out/selinux-genheaders
+          kernel-out/selinux-genheaders kernel-out/security/selinux/flask.h kernel-out/security/selinux/av_permissions.h
           test -s kernel-out/security/selinux/flask.h
           test -s kernel-out/security/selinux/av_permissions.h
           make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" ARCH=arm64 LLVM=1 -s kernelrelease | tee kernelrelease.txt
@@ -76,7 +79,8 @@ jobs:
           set -euo pipefail
           make -C kernel-src O="$GITHUB_WORKSPACE/kernel-out" M="$GITHUB_WORKSPACE/BakaSU/kernel" \
             ARCH=arm64 LLVM=1 CONFIG_KSU=m CONFIG_KSU_TRACEPOINT_HOOK=y \
-            CONFIG_KSU_MULTI_MANAGER_SUPPORT=y -j2 modules
+            CONFIG_KSU_MULTI_MANAGER_SUPPORT=y \
+            KCFLAGS="-I$GITHUB_WORKSPACE/kernel-out/security/selinux" -j2 modules
           test -s BakaSU/kernel/kernelsu.ko
       - name: Offline metadata qualification (not runtime load approval)
         shell: bash
